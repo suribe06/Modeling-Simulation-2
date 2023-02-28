@@ -1,36 +1,33 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.integrate import quad
 import sympy as sym
+import scipy
 import time
 
-def u(x):
-    return np.sin(x)
-
 def plotPhis(phis, a, b):
-    plt.clf()
+    x = sym.symbols('x')
     x_values = np.linspace(a, b, 500)
-    for i in range(len(phis)):
-        y = [phis[i](xi) for xi in x_values]
-        plt.plot(x_values, y, label=f'$\phi_{i}$')
+    n = len(phis)
+    for i in range(n):
+        plt.plot(x_values, sym.lambdify(x, phis[i])(x_values), label=f'$\phi_{i}$')
     plt.legend()
     plt.show()
+
+def dotProduct(f1, f2, a, b):
+    x = sym.symbols('x')
+    integrand = f1* f2
+    return sym.integrate(integrand, (x, a, b)).evalf()
 
 def phi_i(x, i, Omega_j):
     x_min = Omega_j[0]
     x_max = Omega_j[-1]
-    if x_min <= x and x <= x_max:
-        p = 1
-        n = len(Omega_j)
-        for k in range(n):
-            if k != i: p *= (x - Omega_j[k])/(Omega_j[i] - Omega_j[k])
-        return p
-    else:
-        return 0
-    
-def dotProduct(f1, f2, a, b):
-    return quad(lambda x: f1(x) * f2(x), a, b)[0]
-    
+    n = len(Omega_j)
+    p = 1
+    for k in range(n):
+        if k != i:
+            p *= (x - Omega_j[k]) / (Omega_j[i] - Omega_j[k])
+    return sym.Piecewise((sym.simplify(p), sym.And(x >= x_min, x <= x_max)), (0, True))
+
 def lagrangeBasis(p_degree, n_Omegas, a, b):
     n_points = p_degree * n_Omegas + 1
     points = np.linspace(a,b, n_points)
@@ -39,69 +36,102 @@ def lagrangeBasis(p_degree, n_Omegas, a, b):
         omega = points[i*p_degree : (i+1)*p_degree+1]
         Omegas.append(omega)
     phis_dict = {}
+    x = sym.symbols('x')
     for j in range(len(Omegas)):
         Omega_j = Omegas[j]
         for k in range(len(Omega_j)):
-            x = Omega_j[k]
-            phi = lambda x, Omega_j=Omega_j, k=k: phi_i(x, k, Omega_j)
-            if x in phis_dict:
-                phis_dict[x].append(phi)
+            x_val = Omega_j[k]
+            phi = phi_i(x, k, Omega_j)
+            if x_val in phis_dict:
+                phis_dict[x_val].append(phi)
             else:
-                phis_dict[x] = [phi]
+                phis_dict[x_val] = [phi]
     phis = []
-    for x_i, phi_list in phis_dict.items():
+    for x_val, phi_list in phis_dict.items():
         phi_sum = None
         if len(phi_list) == 1:
             phis.append(phi_list[0])
         else:
             phi_sum = phi_list[0]
             for i in range(1, len(phi_list)):
-                phi_sum = lambda x, f=phi_sum, g=phi_list[i]: f(x) + g(x)
+                phi_sum += phi_list[i]
             phis.append(phi_sum)
     return phis
 
-def lagrangeProjection(p_degree, n_Omegas, a, b):
+def calculateSubmatrix(p_degree, phis, a, b):
+    p_degree += 1
+    A = np.zeros((p_degree, p_degree), dtype=float)
+    for i in range(p_degree):
+        for j in range(i, p_degree):
+            A[i][j] = A[j][i] = dotProduct(phis[i], phis[j], a, b)
+    A[p_degree-1][p_degree-1] = A[0][0]
+    return A
+
+def lagrangeProjection(u, p_degree, n_Omegas, a, b):
     n_points = p_degree * n_Omegas + 1
+    x = sym.symbols('x')
+    start = time.time()
     phis = lagrangeBasis(p_degree, n_Omegas, a, b)
+    end = time.time()
+    print("Tiempo de ejecucion calculo de phis:", end - start)
     #plotPhis(phis, a, b)
+    start = time.time()
     B = np.zeros(n_points, dtype=float)
-    A = np.zeros((n_points, n_points), dtype=float)
     for i in range(n_points):
         B[i] = dotProduct(u, phis[i], a, b)
-        for j in range(i, n_points):
-            A[i][j] = A[j][i] = dotProduct(phis[i], phis[j], a, b)
+    A = np.zeros((n_points, n_points), dtype=float)
+    submatrix = calculateSubmatrix(p_degree, phis, a, b)
+    l = 0
+    for i in range(n_Omegas):
+        l = i * p_degree
+        A[l:l+p_degree+1, l:l+p_degree+1] += submatrix
+    end = time.time()
+    print("Tiempo de ejecucion llenado de matriz A y vector B:", end - start)
+    print("Condicion de la matriz A", np.linalg.cond(A))
     C = np.linalg.solve(A, B)
-    y_proj = lambda x: sum([C[i] * phis[i](x) for i in range(n_points)])
+    y_proj = sum(C[i]*phis[i] for i in range(n_points))
     return y_proj
 
-def testMethod(p_degree, n_Omegas, a, b):
-    y_proj = lagrangeProjection(p_degree, n_Omegas, a, b)
+def testMethod(u, p_degree, n_Omegas, a, b):
+    f_hat = lagrangeProjection(u, p_degree, n_Omegas, a, b)
+    x = sym.symbols('x')
     x_values = np.linspace(a, b, 1000)
-    y_u = [u(x_i) for x_i in x_values]
-    y_proj = [y_proj(x_i) for x_i in x_values]
+    y_u = sym.lambdify(x, u)(x_values)
+    y_proj = sym.lambdify(x, f_hat)(x_values)
     plt.figure(figsize=(8, 6))
     plt.plot(x_values, y_proj, label='$\sum^n_{i=0} c_i \phi_i(x)$')
     plt.plot(x_values, y_u, label='$u(x)$')
     plt.title(f'$u(x)$ projection using lagrange polynomials of degree {p_degree} and {n_Omegas} $\Omega_i$ intervals')
     plt.legend()
-    plt.show()
+    plt.savefig("example.png")
 
-def errorStudy(p_degree, a, b, n_max):
-    n_array = [x for x in range(1, n_max)]
+def errorStudy(u, p_degree, a, b, n_max):
+    n_array = [x for x in range(1, n_max+1)]
     errors = []
     for n in n_array:
-        y_proj = lagrangeProjection(p_degree, n, a, b)
-        e = np.sqrt(quad(lambda x: (u(x) - y_proj(x))**2, a, b, limit=100)[0])
-        errors.append(e)
-    p = np.polyfit(n_array, errors, 1)
+        f_hat = lagrangeProjection(u, p_degree, n, a, b)
+        e = sym.lambdify([x], (f_hat - u)**2)
+        L2_norm = np.sqrt(scipy.integrate.quad(e, a, b)[0])
+        errors.append(L2_norm)
+    errors = np.array(errors)
+    n_array = np.array(n_array)
+    p = np.polyfit(np.log10(n_array), np.log10(errors), 1)
+    x_line = np.logspace(np.log10(n_array[0]), np.log10(n_array[-1]), 100)
+    y_line = 10**(p[1]) * x_line**(p[0])
+    print(f'La recta que minimiza los puntos es y = {p[0]:.3f}x + {p[1]:.3f}')
+    plt.clf()
     plt.scatter(n_array, errors, label='$|| u(x) - \sum^n_{i=0} c_i \phi_i(x)||$')
-    plt.plot(n_array, np.polyval(p, n_array), label=f'y = {p[0]:.3f}x + {p[1]:.3f}', color='red')
+    plt.plot(x_line, y_line, label=f'y = {p[0]:.3f}x + {p[1]:.3f}', color='red')
     plt.title(f'Study of Error Using Lagrange Polynomials of Degree {p_degree}')
     plt.xlabel('n')
     plt.ylabel('error')
     plt.yscale('log')
+    plt.xscale('log')
     plt.legend()
-    plt.show()
+    plt.savefig("errors.png")
 
-testMethod(p_degree=2, n_Omegas=6, a=0, b=np.pi)
-errorStudy(p_degree=2, a=0, b=np.pi, n_max=13)
+x = sym.symbols('x')
+u = sym.sin(x)
+
+#testMethod(u, p_degree=4, n_Omegas=10, a=0, b=np.pi)
+errorStudy(u, p_degree=2, a=0, b=np.pi, n_max=20)
