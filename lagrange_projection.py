@@ -15,7 +15,7 @@ def plotPhis(phis, a, b):
 
 def dotProduct(f1, f2, a, b):
     x = sym.symbols('x')
-    integrand = f1* f2
+    integrand = f1 * f2
     return sym.integrate(integrand, (x, a, b)).evalf()
 
 def phi_i(x, i, Omega_j):
@@ -23,29 +23,37 @@ def phi_i(x, i, Omega_j):
     x_max = Omega_j[-1]
     n = len(Omega_j)
     p = 1
+    # Compute the Lagrange basis polynomial for the subinterval Omega_j
     for k in range(n):
         if k != i:
             p *= (x - Omega_j[k]) / (Omega_j[i] - Omega_j[k])
+    # Define the Lagrange basis polynomial as a piecewise function that is zero outside the subinterval Omega_j
     return sym.Piecewise((sym.simplify(p), sym.And(x >= x_min, x <= x_max)), (0, True))
 
 def lagrangeBasis(p_degree, n_Omegas, a, b):
+    # Compute the total number of points in the Lagrange basis
     n_points = p_degree * n_Omegas + 1
     points = np.linspace(a,b, n_points)
+    # Divide the interval (a, b) into n_Omegas subintervals of length p_degree+1
     Omegas = []
     for i in range(n_Omegas):
         omega = points[i*p_degree : (i+1)*p_degree+1]
         Omegas.append(omega)
+    # Compute the Lagrange basis functions for each subinterval Omega_j
     phis_dict = {}
     x = sym.symbols('x')
     for j in range(len(Omegas)):
         Omega_j = Omegas[j]
         for k in range(len(Omega_j)):
+            # Compute the Lagrange Basis that satisfies phi(x_val) = 1
             x_val = Omega_j[k]
             phi = phi_i(x, k, Omega_j)
+            # Save the phi function (Lagrange polynomial) for each point in the interval
             if x_val in phis_dict:
                 phis_dict[x_val].append(phi)
             else:
                 phis_dict[x_val] = [phi]
+    # Because there are x_j points that can be in 2 Omegas at the same time, combine the phi functions that share the same point x_val
     phis = []
     for x_val, phi_list in phis_dict.items():
         phi_sum = None
@@ -59,6 +67,7 @@ def lagrangeBasis(p_degree, n_Omegas, a, b):
     return phis
 
 def calculateSubmatrix(p_degree, phis, a, b):
+    # A submatrix of size p_degree + 1 is created for each Omega subinterval
     p_degree += 1
     A = np.zeros((p_degree, p_degree), dtype=float)
     for i in range(p_degree):
@@ -71,6 +80,7 @@ def lagrangeProjection(u, p_degree, n_Omegas, a, b):
     n_points = p_degree * n_Omegas + 1
     x = sym.symbols('x')
     start = time.time()
+    #Generate the Basis
     phis = lagrangeBasis(p_degree, n_Omegas, a, b)
     end = time.time()
     print("Tiempo de ejecucion calculo de phis:", end - start)
@@ -80,15 +90,19 @@ def lagrangeProjection(u, p_degree, n_Omegas, a, b):
     for i in range(n_points):
         B[i] = dotProduct(u, phis[i], a, b)
     A = np.zeros((n_points, n_points), dtype=float)
+    # Compute the submatrix for each combination of basis functions
     submatrix = calculateSubmatrix(p_degree, phis, a, b)
     l = 0
+    # Fill matrix A in blocks using the submatrix, this helps to reduce computation time.
     for i in range(n_Omegas):
         l = i * p_degree
+        # Filled for each Omega_j 
         A[l:l+p_degree+1, l:l+p_degree+1] += submatrix
     end = time.time()
     print("Tiempo de ejecucion llenado de matriz A y vector B:", end - start)
     print("Condicion de la matriz A", np.linalg.cond(A))
     C = np.linalg.solve(A, B)
+    # Compute the Lagrange projection of the input function
     y_proj = sum(C[i]*phis[i] for i in range(n_points))
     return y_proj
 
@@ -109,12 +123,15 @@ def errorStudy(u, p_degree, a, b, n_max):
     n_array = [x for x in range(1, n_max+1)]
     errors = []
     for n in n_array:
+        # Compute f_hat
         f_hat = lagrangeProjection(u, p_degree, n, a, b)
+        # Calculate L2 Norm for each n
         e = sym.lambdify([x], (f_hat - u)**2)
         L2_norm = np.sqrt(scipy.integrate.quad(e, a, b)[0])
         errors.append(L2_norm)
     errors = np.array(errors)
     n_array = np.array(n_array)
+    # Calculate the line that best fits the errors.
     p = np.polyfit(np.log10(n_array), np.log10(errors), 1)
     x_line = np.logspace(np.log10(n_array[0]), np.log10(n_array[-1]), 100)
     y_line = 10**(p[1]) * x_line**(p[0])
