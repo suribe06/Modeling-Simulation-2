@@ -1,4 +1,4 @@
-name: fenicsmshr
+name: fenics
 channels:
   - conda-forge
 dependencies:
@@ -194,4 +194,4 @@ dependencies:
   - zipp=3.14.0=pyhd8ed1ab_0
   - zlib=1.2.13=h166bdaf_4
   - zstd=1.4.9=ha95c52a_0
-prefix: /home/user/mambaforge/envs/fenicsmshr
+prefix: /home/user/mambaforge/envs/fenics
